@@ -15,6 +15,12 @@ function mask(key) {
   return key.slice(0, 10) + '****' + key.slice(-4);
 }
 
+// Password required to add/edit/delete. Set PANEL_PASSWORD in env to override.
+const PASSWORD = process.env.PANEL_PASSWORD || 'chut';
+function checkPw(pw) {
+  return pw === PASSWORD;
+}
+
 export async function GET() {
   const accounts = await getAccounts();
   const safe = accounts.map((a) => ({ id: a.id, name: a.name, keyMasked: mask(a.key), startAt: a.startAt || null }));
@@ -22,7 +28,10 @@ export async function GET() {
 }
 
 export async function POST(req) {
-  const { name, key, startAt } = await req.json();
+  const { name, key, startAt, password } = await req.json();
+  if (!checkPw(password)) {
+    return NextResponse.json({ error: 'Wrong password' }, { status: 401 });
+  }
   if (!name || !key) {
     return NextResponse.json({ error: 'name and key required' }, { status: 400 });
   }
@@ -35,7 +44,10 @@ export async function POST(req) {
 
 // Update an account's start date/time (or name)
 export async function PATCH(req) {
-  const { id, startAt, name } = await req.json();
+  const { id, startAt, name, password } = await req.json();
+  if (!checkPw(password)) {
+    return NextResponse.json({ error: 'Wrong password' }, { status: 401 });
+  }
   const accounts = await getAccounts();
   const acc = accounts.find((a) => a.id === id);
   if (!acc) return NextResponse.json({ error: 'not found' }, { status: 404 });
@@ -46,7 +58,10 @@ export async function PATCH(req) {
 }
 
 export async function DELETE(req) {
-  const { id } = await req.json();
+  const { id, password } = await req.json();
+  if (!checkPw(password)) {
+    return NextResponse.json({ error: 'Wrong password' }, { status: 401 });
+  }
   const accounts = await getAccounts();
   const next = accounts.filter((a) => a.id !== id);
   await setAccounts(next);

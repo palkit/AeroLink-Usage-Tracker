@@ -64,6 +64,22 @@ function expiry(startAt, now) {
   return { expireAt, leftMs, expired: leftMs <= 0 };
 }
 
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Weekly window: from startAt, each 7-day block. Returns the current block's
+// end time and how much is left, plus which week (1 or 2) we're in.
+function weekly(startAt, now) {
+  if (!startAt) return null;
+  const start = new Date(startAt).getTime();
+  if (isNaN(start)) return null;
+  const elapsed = now - start;
+  if (elapsed < 0) return null;
+  const weekIndex = Math.floor(elapsed / WEEK_MS); // 0 = first week, 1 = second
+  const weekEnd = start + (weekIndex + 1) * WEEK_MS;
+  const leftMs = weekEnd - now;
+  return { weekNo: weekIndex + 1, weekEnd, leftMs, ended: leftMs <= 0 };
+}
+
 async function copyKey(id, setCopied) {
   try {
     const r = await fetch('/api/accounts/reveal?id=' + encodeURIComponent(id)).then((x) => x.json());
@@ -81,6 +97,7 @@ function Card({ acc, now, onRefresh }) {
   const [copied, setCopied] = useState(false);
   const exp = expiry(acc.startAt, now);
   const isExpired = exp && exp.expired;
+  const wk = weekly(acc.startAt, now);
   return (
     <div className="card" style={isExpired ? { opacity: 0.6, borderColor: 'var(--red)' } : undefined}>
       <span className={`badge ${isExpired ? 'red' : acc.state}`}>
@@ -106,6 +123,12 @@ function Card({ acc, now, onRefresh }) {
           <div className="reset">checked {fmtCountdown(now - acc.checkedAt) || '0m'} ago</div>
         )}
       </div>
+
+      {wk && !isExpired && (
+        <div className="expiry" style={{ color: wk.leftMs < 86400000 ? 'var(--amber)' : 'var(--muted)', marginTop: 12 }}>
+          {`📅 Week ${wk.weekNo} ends in ${fmtLong(wk.leftMs)}`}
+        </div>
+      )}
 
       {exp && (
         <div
@@ -209,7 +232,7 @@ function CopyBtn({ id }) {
   );
 }
 
-function StartEditor({ acc, onSaved }) {
+function StartEditor({ acc, onSaved, getPw }) {
   // datetime-local wants "YYYY-MM-DDTHH:mm"
   const toLocalInput = (iso) => {
     if (!iso) return '';
@@ -220,15 +243,17 @@ function StartEditor({ acc, onSaved }) {
   };
   const [val, setVal] = useState(toLocalInput(acc.startAt));
   const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState('');
 
   async function save(v) {
     setVal(v);
     const iso = v ? new Date(v).toISOString() : null;
-    await fetch('/api/accounts', {
+    const res = await fetch('/api/accounts', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ id: acc.id, startAt: iso }),
+      body: JSON.stringify({ id: acc.id, startAt: iso, password: getPw() }),
     });
+    if (!res.ok) { setErr('Wrong password'); setTimeout(() => setErr(''), 1500); return; }
     setSaved(true);
     setTimeout(() => setSaved(false), 1200);
     onSaved && onSaved();
@@ -242,8 +267,8 @@ function StartEditor({ acc, onSaved }) {
         onChange={(e) => save(e.target.value)}
         style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 8px', color: 'var(--text)', fontSize: 12 }}
       />
-      <div className="m" style={{ marginTop: 3 }}>
-        {saved ? '✓ saved' : 'Start date/time — 2 weeks se expiry gina jayega'}
+      <div className="m" style={{ marginTop: 3, color: err ? 'var(--red)' : undefined }}>
+        {err ? err : saved ? '✓ saved' : 'Start date/time — week & expiry isi se ginte hain'}
       </div>
     </div>
   );
@@ -254,7 +279,11 @@ function Settings({ onClose }) {
   const [name, setName] = useState('');
   const [key, setKey] = useState('');
   const [start, setStart] = useState('');
+  const [pw, setPw] = useState('');
   const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  const getPw = () => pw;
 
   const reload = useCallback(async () => {
     const a = await fetch('/api/accounts').then((r) => r.json());
@@ -264,24 +293,29 @@ function Settings({ onClose }) {
 
   async function add() {
     if (!name.trim() || !key.trim()) return;
-    setSaving(true);
+    if (!pw.trim()) { setErr('Password daalo'); return; }
+    setSaving(true); setErr('');
     const iso = start ? new Date(start).toISOString() : null;
-    await fetch('/api/accounts', {
+    const res = await fetch('/api/accounts', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name, key, startAt: iso }),
+      body: JSON.stringify({ name, key, startAt: iso, password: pw }),
     });
+    setSaving(false);
+    if (!res.ok) { setErr('Wrong password'); return; }
     setName(''); setKey(''); setStart('');
     await reload();
-    setSaving(false);
   }
 
   async function del(id) {
-    await fetch('/api/accounts', {
+    if (!pw.trim()) { setErr('Delete karne ke liye upar password daalo'); return; }
+    setErr('');
+    const res = await fetch('/api/accounts', {
       method: 'DELETE',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ id }),
+      body: JSON.stringify({ id, password: pw }),
     });
+    if (!res.ok) { setErr('Wrong password'); return; }
     await reload();
   }
 
@@ -289,7 +323,12 @@ function Settings({ onClose }) {
     <div className="overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>Accounts</h2>
-        <div className="hint">Add each Aerolink account with a name, its <code>aero_live_</code> key, and the date you got it (2-week validity).</div>
+        <div className="hint">Add each Aerolink account with a name, its <code>aero_live_</code> key, and the date you got it (2-week validity). Add/delete/edit ke liye password zaroori hai.</div>
+
+        <div className="field" style={{ marginBottom: 16 }}>
+          <label>🔒 Password (add / delete / edit ke liye)</label>
+          <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="password daalo" />
+        </div>
 
         {list.map((a) => (
           <div className="acct-row" key={a.id} style={{ display: 'block' }}>
@@ -303,7 +342,7 @@ function Settings({ onClose }) {
                 <button className="btn danger" onClick={() => del(a.id)}>Delete</button>
               </div>
             </div>
-            <StartEditor acc={a} onSaved={reload} />
+            <StartEditor acc={a} onSaved={reload} getPw={getPw} />
           </div>
         ))}
 
@@ -319,6 +358,8 @@ function Settings({ onClose }) {
           <label>Start date &amp; time (jab account/key mili)</label>
           <input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} />
         </div>
+
+        {err && <div style={{ color: 'var(--red)', fontSize: 13, marginBottom: 10 }}>{err}</div>}
 
         <div className="modal-actions">
           <button className="btn" onClick={onClose}>Close</button>
