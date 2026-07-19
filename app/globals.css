@@ -67,6 +67,12 @@ body {
 .stat .used .muted { color: var(--muted); }
 .stat .reset { color: var(--muted); font-size: 12px; margin-top: 6px; }
 
+.expiry {
+  margin-top: 12px; font-size: 12px; font-weight: 600; text-align: center;
+  padding: 7px 10px; border-radius: 8px; background: var(--panel-2);
+  width: 100%; box-sizing: border-box;
+}
+
 .badge {
   font-size: 11px; padding: 3px 9px; border-radius: 999px; font-weight: 600;
   position: absolute; top: 18px; right: 18px;

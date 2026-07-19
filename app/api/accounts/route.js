@@ -17,20 +17,32 @@ function mask(key) {
 
 export async function GET() {
   const accounts = await getAccounts();
-  const safe = accounts.map((a) => ({ id: a.id, name: a.name, keyMasked: mask(a.key) }));
+  const safe = accounts.map((a) => ({ id: a.id, name: a.name, keyMasked: mask(a.key), startAt: a.startAt || null }));
   return NextResponse.json({ accounts: safe });
 }
 
 export async function POST(req) {
-  const { name, key } = await req.json();
+  const { name, key, startAt } = await req.json();
   if (!name || !key) {
     return NextResponse.json({ error: 'name and key required' }, { status: 400 });
   }
   const accounts = await getAccounts();
-  const acc = { id: makeId(), name: name.trim(), key: key.trim() };
+  const acc = { id: makeId(), name: name.trim(), key: key.trim(), startAt: startAt || null };
   accounts.push(acc);
   await setAccounts(accounts);
-  return NextResponse.json({ id: acc.id, name: acc.name, keyMasked: mask(acc.key) });
+  return NextResponse.json({ id: acc.id, name: acc.name, keyMasked: mask(acc.key), startAt: acc.startAt });
+}
+
+// Update an account's start date/time (or name)
+export async function PATCH(req) {
+  const { id, startAt, name } = await req.json();
+  const accounts = await getAccounts();
+  const acc = accounts.find((a) => a.id === id);
+  if (!acc) return NextResponse.json({ error: 'not found' }, { status: 404 });
+  if (startAt !== undefined) acc.startAt = startAt || null;
+  if (name !== undefined && name.trim()) acc.name = name.trim();
+  await setAccounts(accounts);
+  return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(req) {

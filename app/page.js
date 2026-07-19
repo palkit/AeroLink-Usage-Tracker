@@ -40,6 +40,30 @@ function fmtCountdown(ms) {
   return `${m}m`;
 }
 
+const VALIDITY_MS = 14 * 24 * 60 * 60 * 1000; // accounts last 2 weeks
+
+// Long countdown with days for account expiry
+function fmtLong(ms) {
+  if (ms == null) return null;
+  if (ms <= 0) return 'expired';
+  const d = Math.floor(ms / 86400000);
+  const h = Math.floor((ms % 86400000) / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+// returns { expireAt, leftMs, expired } or null if no startAt
+function expiry(startAt, now) {
+  if (!startAt) return null;
+  const start = new Date(startAt).getTime();
+  if (isNaN(start)) return null;
+  const expireAt = start + VALIDITY_MS;
+  const leftMs = expireAt - now;
+  return { expireAt, leftMs, expired: leftMs <= 0 };
+}
+
 async function copyKey(id, setCopied) {
   try {
     const r = await fetch('/api/accounts/reveal?id=' + encodeURIComponent(id)).then((x) => x.json());
@@ -55,10 +79,12 @@ function Card({ acc, now, onRefresh }) {
   const win = acc.window === '5h' ? '5-hour' : acc.window === 'weekly' ? 'Weekly' : null;
   const resetIn = acc.estReset ? fmtCountdown(acc.estReset - now) : null;
   const [copied, setCopied] = useState(false);
+  const exp = expiry(acc.startAt, now);
+  const isExpired = exp && exp.expired;
   return (
-    <div className="card">
-      <span className={`badge ${acc.state}`}>
-        {acc.state === 'green' ? 'Active' : acc.state === 'red' ? 'Limit reached' : acc.state === 'error' ? 'Error' : 'Unchecked'}
+    <div className="card" style={isExpired ? { opacity: 0.6, borderColor: 'var(--red)' } : undefined}>
+      <span className={`badge ${isExpired ? 'red' : acc.state}`}>
+        {isExpired ? 'Expired' : acc.state === 'green' ? 'Active' : acc.state === 'red' ? 'Limit reached' : acc.state === 'error' ? 'Error' : 'Unchecked'}
       </span>
       <div className="name">{acc.name}</div>
       <div className="keymask">{acc.keyMasked || ''}</div>
@@ -80,9 +106,21 @@ function Card({ acc, now, onRefresh }) {
           <div className="reset">checked {fmtCountdown(now - acc.checkedAt) || '0m'} ago</div>
         )}
       </div>
+
+      {exp && (
+        <div
+          className="expiry"
+          style={{ color: isExpired ? 'var(--red)' : (exp.leftMs < 2 * 86400000 ? 'var(--amber)' : 'var(--muted)') }}
+        >
+          {isExpired
+            ? '⛔ Account expired (2 weeks over)'
+            : `⏳ Account expires in ${fmtLong(exp.leftMs)}`}
+        </div>
+      )}
+
       <button
         className="btn"
-        style={{ marginTop: 14, width: '100%' }}
+        style={{ marginTop: 12, width: '100%' }}
         onClick={() => copyKey(acc.id, setCopied)}
       >
         {copied ? '✓ Copied!' : 'Copy API key'}
@@ -171,10 +209,51 @@ function CopyBtn({ id }) {
   );
 }
 
+function StartEditor({ acc, onSaved }) {
+  // datetime-local wants "YYYY-MM-DDTHH:mm"
+  const toLocalInput = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  const [val, setVal] = useState(toLocalInput(acc.startAt));
+  const [saved, setSaved] = useState(false);
+
+  async function save(v) {
+    setVal(v);
+    const iso = v ? new Date(v).toISOString() : null;
+    await fetch('/api/accounts', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: acc.id, startAt: iso }),
+    });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1200);
+    onSaved && onSaved();
+  }
+
+  return (
+    <div style={{ marginTop: 6 }}>
+      <input
+        type="datetime-local"
+        value={val}
+        onChange={(e) => save(e.target.value)}
+        style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 8px', color: 'var(--text)', fontSize: 12 }}
+      />
+      <div className="m" style={{ marginTop: 3 }}>
+        {saved ? '✓ saved' : 'Start date/time — 2 weeks se expiry gina jayega'}
+      </div>
+    </div>
+  );
+}
+
 function Settings({ onClose }) {
   const [list, setList] = useState([]);
   const [name, setName] = useState('');
   const [key, setKey] = useState('');
+  const [start, setStart] = useState('');
   const [saving, setSaving] = useState(false);
 
   const reload = useCallback(async () => {
@@ -186,12 +265,13 @@ function Settings({ onClose }) {
   async function add() {
     if (!name.trim() || !key.trim()) return;
     setSaving(true);
+    const iso = start ? new Date(start).toISOString() : null;
     await fetch('/api/accounts', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name, key }),
+      body: JSON.stringify({ name, key, startAt: iso }),
     });
-    setName(''); setKey('');
+    setName(''); setKey(''); setStart('');
     await reload();
     setSaving(false);
   }
@@ -209,18 +289,21 @@ function Settings({ onClose }) {
     <div className="overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>Accounts</h2>
-        <div className="hint">Add each Aerolink account with a name and its <code>aero_live_</code> API key.</div>
+        <div className="hint">Add each Aerolink account with a name, its <code>aero_live_</code> key, and the date you got it (2-week validity).</div>
 
         {list.map((a) => (
-          <div className="acct-row" key={a.id}>
-            <div className="info">
-              <div>{a.name}</div>
-              <div className="m">{a.keyMasked}</div>
+          <div className="acct-row" key={a.id} style={{ display: 'block' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div className="info">
+                <div>{a.name}</div>
+                <div className="m">{a.keyMasked}</div>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <CopyBtn id={a.id} />
+                <button className="btn danger" onClick={() => del(a.id)}>Delete</button>
+              </div>
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <CopyBtn id={a.id} />
-              <button className="btn danger" onClick={() => del(a.id)}>Delete</button>
-            </div>
+            <StartEditor acc={a} onSaved={reload} />
           </div>
         ))}
 
@@ -231,6 +314,10 @@ function Settings({ onClose }) {
         <div className="field">
           <label>API key</label>
           <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="aero_live_..." />
+        </div>
+        <div className="field">
+          <label>Start date &amp; time (jab account/key mili)</label>
+          <input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} />
         </div>
 
         <div className="modal-actions">

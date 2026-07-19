@@ -9,6 +9,7 @@ export async function GET() {
   const data = accounts.map((a) => ({
     id: a.id,
     name: a.name,
+    startAt: a.startAt || null,
     ...(status[a.id] || { state: 'unknown', message: 'Not checked yet' }),
   }));
   return NextResponse.json({ accounts: data, serverNow: Date.now() });
