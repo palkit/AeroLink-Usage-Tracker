@@ -32,6 +32,15 @@ function Ring({ state, percent }) {
   );
 }
 
+// Messages can occasionally be an object (e.g. an API error shape); coerce to a
+// safe string so React never tries to render an object as a child.
+function msgText(m) {
+  if (m == null) return '';
+  if (typeof m === 'string') return m;
+  if (typeof m === 'object') return m.message || m.type || JSON.stringify(m);
+  return String(m);
+}
+
 function fmtCountdown(ms) {
   if (ms == null || ms <= 0) return null;
   const h = Math.floor(ms / 3600000);
@@ -81,14 +90,42 @@ function weekly(startAt, now) {
 }
 
 async function copyKey(id, setCopied) {
+  let key = '';
   try {
     const r = await fetch('/api/accounts/reveal?id=' + encodeURIComponent(id)).then((x) => x.json());
-    if (r.key) {
-      await navigator.clipboard.writeText(r.key);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    }
-  } catch {}
+    key = r.key || '';
+  } catch {
+    alert('Copy failed: key fetch nahi hui');
+    return;
+  }
+  if (!key) { alert('Copy failed: key nahi mili'); return; }
+
+  // Try modern clipboard API, fall back to a hidden textarea (works on http / older browsers)
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(key);
+    ok = true;
+  } catch {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = key;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+    } catch { ok = false; }
+  }
+
+  if (ok) {
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  } else {
+    // last resort: show the key so user can copy manually
+    window.prompt('Copy nahi hui — yeh key manually copy karo:', key);
+  }
 }
 
 function Card({ acc, now, onRefresh }) {
@@ -117,7 +154,7 @@ function Card({ acc, now, onRefresh }) {
           </>
         )}
         {acc.state === 'green' && <div className="win" style={{ color: 'var(--green)' }}>Limit available</div>}
-        {acc.state === 'error' && <div className="win" style={{ color: 'var(--amber)' }}>{acc.message}</div>}
+        {acc.state === 'error' && <div className="win" style={{ color: 'var(--amber)' }}>{msgText(acc.message)}</div>}
         {acc.state === 'unknown' && <div className="reset">Not checked yet</div>}
         {acc.checkedAt && (
           <div className="reset">checked {fmtCountdown(now - acc.checkedAt) || '0m'} ago</div>
@@ -241,34 +278,49 @@ function StartEditor({ acc, onSaved, getPw }) {
     const pad = (n) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
-  const [val, setVal] = useState(toLocalInput(acc.startAt));
+  const original = toLocalInput(acc.startAt);
+  const [val, setVal] = useState(original);
   const [saved, setSaved] = useState(false);
   const [err, setErr] = useState('');
+  const [saving, setSaving] = useState(false);
+  const dirty = val !== original;
 
-  async function save(v) {
-    setVal(v);
-    const iso = v ? new Date(v).toISOString() : null;
+  async function save() {
+    if (!getPw().trim()) { setErr('Upar password daalo'); setTimeout(() => setErr(''), 1800); return; }
+    setSaving(true); setErr('');
+    const iso = val ? new Date(val).toISOString() : null;
     const res = await fetch('/api/accounts', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ id: acc.id, startAt: iso, password: getPw() }),
     });
-    if (!res.ok) { setErr('Wrong password'); setTimeout(() => setErr(''), 1500); return; }
+    setSaving(false);
+    if (!res.ok) { setErr('Wrong password'); setTimeout(() => setErr(''), 1800); return; }
     setSaved(true);
-    setTimeout(() => setSaved(false), 1200);
+    setTimeout(() => setSaved(false), 1500);
     onSaved && onSaved();
   }
 
   return (
-    <div style={{ marginTop: 6 }}>
-      <input
-        type="datetime-local"
-        value={val}
-        onChange={(e) => save(e.target.value)}
-        style={{ width: '100%', background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 8px', color: 'var(--text)', fontSize: 12 }}
-      />
-      <div className="m" style={{ marginTop: 3, color: err ? 'var(--red)' : undefined }}>
-        {err ? err : saved ? '✓ saved' : 'Start date/time — week & expiry isi se ginte hain'}
+    <div style={{ marginTop: 8 }}>
+      <div className="start-edit-row">
+        <input
+          type="datetime-local"
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          className="start-input"
+        />
+        <button
+          className="btn primary sm"
+          onClick={save}
+          disabled={saving || !dirty}
+          title={dirty ? 'Save date' : 'Koi change nahi'}
+        >
+          {saving ? '…' : saved ? '✓' : 'Save'}
+        </button>
+      </div>
+      <div className="m" style={{ marginTop: 4, color: err ? 'var(--red)' : saved ? 'var(--green)' : undefined }}>
+        {err ? err : saved ? '✓ saved' : dirty ? 'Save dabao changes lagane ke liye' : 'Start date/time — week & expiry isi se ginte hain'}
       </div>
     </div>
   );
@@ -307,8 +359,11 @@ function Settings({ onClose }) {
     await reload();
   }
 
-  async function del(id) {
+  async function del(id, accName) {
     if (!pw.trim()) { setErr('Delete karne ke liye upar password daalo'); return; }
+    // Confirm so a saved account isn't deleted by accident
+    const ok = window.confirm(`Pakka "${accName}" account delete karna hai?\n\nYeh wapas nahi aayega.`);
+    if (!ok) return;
     setErr('');
     const res = await fetch('/api/accounts', {
       method: 'DELETE',
@@ -321,51 +376,63 @@ function Settings({ onClose }) {
 
   return (
     <div className="overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Accounts</h2>
-        <div className="hint">Add each Aerolink account with a name, its <code>aero_live_</code> key, and the date you got it (2-week validity). Add/delete/edit ke liye password zaroori hai.</div>
+      <div className="modal wide" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <h2>Accounts</h2>
+          <button className="btn sm" onClick={onClose}>✕</button>
+        </div>
 
-        <div className="field" style={{ marginBottom: 16 }}>
+        <div className="field pw-field">
           <label>🔒 Password (add / delete / edit ke liye)</label>
           <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="password daalo" />
         </div>
 
-        {list.map((a) => (
-          <div className="acct-row" key={a.id} style={{ display: 'block' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div className="info">
-                <div>{a.name}</div>
-                <div className="m">{a.keyMasked}</div>
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <CopyBtn id={a.id} />
-                <button className="btn danger" onClick={() => del(a.id)}>Delete</button>
-              </div>
+        <div className="settings-cols">
+          {/* LEFT: saved accounts, scrollable */}
+          <div className="settings-left">
+            <div className="col-title">Saved accounts ({list.length})</div>
+            <div className="acct-list">
+              {list.length === 0 && <div className="m" style={{ padding: '8px 0' }}>Abhi koi account nahi.</div>}
+              {list.map((a) => (
+                <div className="acct-row" key={a.id}>
+                  <div className="acct-top">
+                    <div className="info">
+                      <div className="an">{a.name}</div>
+                      <div className="m">{a.keyMasked}</div>
+                    </div>
+                    <div className="acct-btns">
+                      <CopyBtn id={a.id} />
+                      <button className="btn danger sm" onClick={() => del(a.id, a.name)}>Delete</button>
+                    </div>
+                  </div>
+                  <StartEditor acc={a} onSaved={reload} getPw={getPw} />
+                </div>
+              ))}
             </div>
-            <StartEditor acc={a} onSaved={reload} getPw={getPw} />
           </div>
-        ))}
 
-        <div className="field" style={{ marginTop: 18 }}>
-          <label>Account name</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Main account" />
-        </div>
-        <div className="field">
-          <label>API key</label>
-          <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="aero_live_..." />
-        </div>
-        <div className="field">
-          <label>Start date &amp; time (jab account/key mili)</label>
-          <input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} />
-        </div>
+          {/* RIGHT: add new */}
+          <div className="settings-right">
+            <div className="col-title">Add new account</div>
+            <div className="field">
+              <label>Account name</label>
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Main account" />
+            </div>
+            <div className="field">
+              <label>API key</label>
+              <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="aero_live_..." />
+            </div>
+            <div className="field">
+              <label>Start date &amp; time (jab account/key mili)</label>
+              <input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} />
+            </div>
 
-        {err && <div style={{ color: 'var(--red)', fontSize: 13, marginBottom: 10 }}>{err}</div>}
+            {err && <div style={{ color: 'var(--red)', fontSize: 13, marginBottom: 10 }}>{err}</div>}
 
-        <div className="modal-actions">
-          <button className="btn" onClick={onClose}>Close</button>
-          <button className="btn primary" onClick={add} disabled={saving}>
-            {saving ? 'Adding…' : 'Add account'}
-          </button>
+            <button className="btn primary block" onClick={add} disabled={saving}>
+              {saving ? 'Adding…' : '+ Add account'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
