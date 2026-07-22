@@ -89,6 +89,21 @@ function weekly(startAt, now) {
   return { weekNo: weekIndex + 1, weekEnd, leftMs, ended: leftMs <= 0 };
 }
 
+const FIVE_H = 5 * 60 * 60 * 1000;
+
+// 5-hour window resets at fixed times. resetAt is ANY known reset moment (anchor);
+// windows repeat every 5h from it in both directions. Returns the next reset
+// boundary after `now` and how long until then — a rolling, always-accurate clock.
+function next5h(resetAt, now) {
+  if (!resetAt) return null;
+  const a = new Date(resetAt).getTime();
+  if (isNaN(a)) return null;
+  const k = Math.ceil((now - a) / FIVE_H);
+  let next = a + k * FIVE_H;
+  if (next <= now) next += FIVE_H; // guard when exactly on a boundary
+  return { next, leftMs: next - now };
+}
+
 async function copyKey(id, setCopied) {
   let key = '';
   try {
@@ -130,11 +145,11 @@ async function copyKey(id, setCopied) {
 
 function Card({ acc, now, onRefresh }) {
   const win = acc.window === '5h' ? '5-hour' : acc.window === 'weekly' ? 'Weekly' : null;
-  const resetIn = acc.estReset ? fmtCountdown(acc.estReset - now) : null;
   const [copied, setCopied] = useState(false);
   const exp = expiry(acc.startAt, now);
   const isExpired = exp && exp.expired;
   const wk = weekly(acc.startAt, now);
+  const r5 = next5h(acc.resetAt, now); // fixed 5-hour reset clock
   return (
     <div className="card" style={isExpired ? { opacity: 0.6, borderColor: 'var(--red)' } : undefined}>
       <span className={`badge ${isExpired ? 'red' : acc.state}`}>
@@ -150,7 +165,6 @@ function Card({ acc, now, onRefresh }) {
             {acc.usedAllowance != null && (
               <div className="used">${acc.usedAllowance.toFixed(2)} <span className="muted">used</span></div>
             )}
-            <div className="reset">{resetIn ? `~resets in ${resetIn} (est.)` : 'reset time unknown'}</div>
           </>
         )}
         {acc.state === 'green' && <div className="win" style={{ color: 'var(--green)' }}>Limit available</div>}
@@ -161,8 +175,14 @@ function Card({ acc, now, onRefresh }) {
         )}
       </div>
 
+      {r5 && !isExpired && (
+        <div className="expiry" style={{ color: r5.leftMs < 60 * 60 * 1000 ? 'var(--amber)' : 'var(--green)', marginTop: 12 }}>
+          {`⏱ 5h window resets in ${fmtCountdown(r5.leftMs) || '0m'}`}
+        </div>
+      )}
+
       {wk && !isExpired && (
-        <div className="expiry" style={{ color: wk.leftMs < 86400000 ? 'var(--amber)' : 'var(--muted)', marginTop: 12 }}>
+        <div className="expiry" style={{ color: wk.leftMs < 86400000 ? 'var(--amber)' : 'var(--muted)', marginTop: 8 }}>
           {`📅 Week ${wk.weekNo} ends in ${fmtLong(wk.leftMs)}`}
         </div>
       )}
@@ -207,14 +227,6 @@ export default function Page() {
     setAccounts(s.accounts.map((x) => ({ ...x, keyMasked: maskMap[x.id] })));
   }, []);
 
-  useEffect(() => { load(); }, [load]);
-  // poll status every 15s, tick countdown every 1s
-  useEffect(() => {
-    const p = setInterval(load, 15000);
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => { clearInterval(p); clearInterval(t); };
-  }, [load]);
-
   async function refreshNow() {
     setRefreshing(true);
     await fetch('/api/refresh', { method: 'POST', body: '{}' });
@@ -222,12 +234,21 @@ export default function Page() {
     setRefreshing(false);
   }
 
+  // Live API check happens on page load/refresh, and again on "Check now".
+  // No background polling anymore — 5h/weekly/expiry countdowns are pure
+  // clock math and tick locally every second regardless.
+  useEffect(() => { refreshNow(); }, []);
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
   return (
     <div className="wrap">
       <div className="topbar">
         <div>
           <h1>Aerolink Usage Panel</h1>
-          <div className="sub">{accounts.length} account{accounts.length !== 1 ? 's' : ''} · auto-checks green every 5m, red every 2m</div>
+          <div className="sub">{accounts.length} account{accounts.length !== 1 ? 's' : ''} · live-checks on page load &amp; Check now</div>
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
           <button className="btn" onClick={refreshNow} disabled={refreshing}>
@@ -248,7 +269,7 @@ export default function Page() {
       )}
 
       <div className="foot">
-        Reset times are estimates based on when a limit was first detected — accurate to your check interval.
+        5-hour reset is calculated from your saved reset time (fixed 5h cycle) — always exact, no API needed.
       </div>
 
       {showSettings && (
@@ -278,21 +299,24 @@ function StartEditor({ acc, onSaved, getPw }) {
     const pad = (n) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
-  const original = toLocalInput(acc.startAt);
-  const [val, setVal] = useState(original);
+  const startOriginal = toLocalInput(acc.startAt);
+  const resetOriginal = toLocalInput(acc.resetAt);
+  const [start, setStart] = useState(startOriginal);
+  const [reset, setReset] = useState(resetOriginal);
   const [saved, setSaved] = useState(false);
   const [err, setErr] = useState('');
   const [saving, setSaving] = useState(false);
-  const dirty = val !== original;
+  const dirty = start !== startOriginal || reset !== resetOriginal;
 
   async function save() {
     if (!getPw().trim()) { setErr('Upar password daalo'); setTimeout(() => setErr(''), 1800); return; }
     setSaving(true); setErr('');
-    const iso = val ? new Date(val).toISOString() : null;
+    const startIso = start ? new Date(start).toISOString() : null;
+    const resetIso = reset ? new Date(reset).toISOString() : null;
     const res = await fetch('/api/accounts', {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ id: acc.id, startAt: iso, password: getPw() }),
+      body: JSON.stringify({ id: acc.id, startAt: startIso, resetAt: resetIso, password: getPw() }),
     });
     setSaving(false);
     if (!res.ok) { setErr('Wrong password'); setTimeout(() => setErr(''), 1800); return; }
@@ -303,24 +327,34 @@ function StartEditor({ acc, onSaved, getPw }) {
 
   return (
     <div style={{ marginTop: 8 }}>
+      <div className="m" style={{ marginBottom: 3 }}>Start date/time (2-week &amp; weekly count)</div>
       <div className="start-edit-row">
         <input
           type="datetime-local"
-          value={val}
-          onChange={(e) => setVal(e.target.value)}
+          value={start}
+          onChange={(e) => setStart(e.target.value)}
+          className="start-input"
+        />
+      </div>
+      <div className="m" style={{ marginTop: 8, marginBottom: 3 }}>5-hour reset time</div>
+      <div className="start-edit-row">
+        <input
+          type="datetime-local"
+          value={reset}
+          onChange={(e) => setReset(e.target.value)}
           className="start-input"
         />
         <button
           className="btn primary sm"
           onClick={save}
           disabled={saving || !dirty}
-          title={dirty ? 'Save date' : 'Koi change nahi'}
+          title={dirty ? 'Save changes' : 'Koi change nahi'}
         >
           {saving ? '…' : saved ? '✓' : 'Save'}
         </button>
       </div>
       <div className="m" style={{ marginTop: 4, color: err ? 'var(--red)' : saved ? 'var(--green)' : undefined }}>
-        {err ? err : saved ? '✓ saved' : dirty ? 'Save dabao changes lagane ke liye' : 'Start date/time — week & expiry isi se ginte hain'}
+        {err ? err : saved ? '✓ saved' : dirty ? 'Save dabao changes lagane ke liye' : ' '}
       </div>
     </div>
   );
@@ -331,6 +365,7 @@ function Settings({ onClose }) {
   const [name, setName] = useState('');
   const [key, setKey] = useState('');
   const [start, setStart] = useState('');
+  const [reset, setReset] = useState('');
   const [pw, setPw] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -348,14 +383,15 @@ function Settings({ onClose }) {
     if (!pw.trim()) { setErr('Password daalo'); return; }
     setSaving(true); setErr('');
     const iso = start ? new Date(start).toISOString() : null;
+    const resetIso = reset ? new Date(reset).toISOString() : null;
     const res = await fetch('/api/accounts', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name, key, startAt: iso, password: pw }),
+      body: JSON.stringify({ name, key, startAt: iso, resetAt: resetIso, password: pw }),
     });
     setSaving(false);
     if (!res.ok) { setErr('Wrong password'); return; }
-    setName(''); setKey(''); setStart('');
+    setName(''); setKey(''); setStart(''); setReset('');
     await reload();
   }
 
@@ -425,6 +461,11 @@ function Settings({ onClose }) {
             <div className="field">
               <label>Start date &amp; time (jab account/key mili)</label>
               <input type="datetime-local" value={start} onChange={(e) => setStart(e.target.value)} />
+            </div>
+            <div className="field">
+              <label>5-hour reset time (koi bhi ek exact reset moment)</label>
+              <input type="datetime-local" value={reset} onChange={(e) => setReset(e.target.value)} />
+              <div className="m" style={{ marginTop: 4 }}>Isi se har 5 ghante ka agla reset apne aap ginta rahega.</div>
             </div>
 
             {err && <div style={{ color: 'var(--red)', fontSize: 13, marginBottom: 10 }}>{err}</div>}
