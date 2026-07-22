@@ -150,35 +150,56 @@ function Card({ acc, now, onRefresh }) {
   const isExpired = exp && exp.expired;
   const wk = weekly(acc.startAt, now);
   const r5 = next5h(acc.resetAt, now); // fixed 5-hour reset clock
+
+  // Weekly $55 pool is separate from (and bigger than) the $8 5-hour sub-quota.
+  // Once it's hit, it stays hit for the rest of THIS week (Week 1 or Week 2) —
+  // a 5-hour reset only refills the small window, not the weekly pool. This
+  // stays true until wk.weekNo actually rolls past the week it was hit in.
+  const weeklyCapHit = !!(acc.weeklyCapHit && (!wk || acc.weeklyCapWeekNo === wk.weekNo));
+  const effState = weeklyCapHit ? 'red' : acc.state;
+
   return (
     <div className="card" style={isExpired ? { opacity: 0.6, borderColor: 'var(--red)' } : undefined}>
-      <span className={`badge ${isExpired ? 'red' : acc.state}`}>
-        {isExpired ? 'Expired' : acc.state === 'green' ? 'Active' : acc.state === 'red' ? 'Limit reached' : acc.state === 'error' ? 'Error' : 'Unchecked'}
+      <span className={`wk55-badge ${weeklyCapHit ? 'hit' : 'ok'}`} title="Weekly $55 allowance">
+        <span className="wk55-dot" /> $55/wk {weeklyCapHit ? 'used' : 'ok'}
+      </span>
+      <span className={`badge ${isExpired ? 'red' : effState}`}>
+        {isExpired ? 'Expired' : effState === 'green' ? 'Active' : effState === 'red' ? 'Limit reached' : effState === 'error' ? 'Error' : 'Unchecked'}
       </span>
       <div className="name">{acc.name}</div>
       <div className="keymask">{acc.keyMasked || ''}</div>
-      <Ring state={acc.state} percent={acc.state === 'red' ? 100 : (acc.state === 'green' ? 100 : 0)} />
+      <Ring state={effState} percent={effState === 'red' ? 100 : (effState === 'green' ? 100 : 0)} />
       <div className="stat">
-        {acc.state === 'red' && (
+        {effState === 'red' && (
           <>
-            <div className="win">{win || 'Limit'} reached</div>
-            {acc.usedAllowance != null && (
+            <div className="win">{weeklyCapHit ? 'Weekly $55 limit' : (win || 'Limit')} reached</div>
+            {weeklyCapHit ? (
+              <div className="used">$55.00 <span className="muted">used this week</span></div>
+            ) : acc.usedAllowance != null && (
               <div className="used">${acc.usedAllowance.toFixed(2)} <span className="muted">used</span></div>
             )}
           </>
         )}
-        {acc.state === 'green' && <div className="win" style={{ color: 'var(--green)' }}>Limit available</div>}
-        {acc.state === 'error' && <div className="win" style={{ color: 'var(--amber)' }}>{msgText(acc.message)}</div>}
-        {acc.state === 'unknown' && <div className="reset">Not checked yet</div>}
+        {effState === 'green' && <div className="win" style={{ color: 'var(--green)' }}>Limit available</div>}
+        {effState === 'error' && <div className="win" style={{ color: 'var(--amber)' }}>{msgText(acc.message)}</div>}
+        {effState === 'unknown' && <div className="reset">Not checked yet</div>}
         {acc.checkedAt && (
           <div className="reset">checked {fmtCountdown(now - acc.checkedAt) || '0m'} ago</div>
         )}
       </div>
 
-      {r5 && !isExpired && (
-        <div className="expiry" style={{ color: r5.leftMs < 60 * 60 * 1000 ? 'var(--amber)' : 'var(--green)', marginTop: 12 }}>
-          {`⏱ 5h window resets in ${fmtCountdown(r5.leftMs) || '0m'}`}
+      {weeklyCapHit ? (
+        <div className="expiry" style={{ color: 'var(--red)', marginTop: 12 }}>
+          {wk && wk.weekNo < 2
+            ? `🔒 $55/week used — unlocks when Week 2 starts (${fmtLong(wk.leftMs)})`
+            : '🔒 $55/week used — no more resets left, stays limited (last week)'}
         </div>
+      ) : (
+        r5 && !isExpired && (
+          <div className="expiry" style={{ color: r5.leftMs < 60 * 60 * 1000 ? 'var(--amber)' : 'var(--green)', marginTop: 12 }}>
+            {`⏱ 5h window resets in ${fmtCountdown(r5.leftMs) || '0m'}`}
+          </div>
+        )
       )}
 
       {wk && !isExpired && (
