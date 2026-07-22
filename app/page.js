@@ -277,10 +277,13 @@ export default function Page() {
     setRefreshing(false);
   }
 
-  // Live API check happens on page load/refresh, and again on "Check now".
-  // No background polling anymore — 5h/weekly/expiry countdowns are pure
-  // clock math and tick locally every second regardless.
-  useEffect(() => { refreshNow(); }, []);
+  // Show whatever we already have saved (last known status) immediately on
+  // load, instead of a blank "No accounts" screen while the live check runs.
+  // The live check then updates it in the background, on load and "Check now".
+  useEffect(() => {
+    load();
+    refreshNow();
+  }, []);
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
