@@ -32,6 +32,28 @@ function Ring({ state, percent }) {
   );
 }
 
+// Small ring twin of Ring(), used for the weekly $55 allowance indicator.
+function MiniRing({ hit }) {
+  const r = 26, c = 2 * Math.PI * r;
+  const color = hit ? 'var(--red)' : 'var(--green)';
+  return (
+    <div className="mini-ring-wrap" title="Weekly $55 allowance">
+      <svg width="64" height="64" viewBox="0 0 64 64">
+        <circle cx="32" cy="32" r={r} fill="none" stroke="var(--border)" strokeWidth="7" />
+        <circle
+          cx="32" cy="32" r={r} fill="none" stroke={color} strokeWidth="7"
+          strokeLinecap="round" strokeDasharray={`${c} ${c}`}
+          transform="rotate(-90 32 32)"
+        />
+      </svg>
+      <div className="mini-ring-center">
+        <div className="mini-big" style={{ color }}>$55</div>
+        <div className="mini-lbl">{hit ? 'used' : 'ok'}</div>
+      </div>
+    </div>
+  );
+}
+
 // Messages can occasionally be an object (e.g. an API error shape); coerce to a
 // safe string so React never tries to render an object as a child.
 function msgText(m) {
@@ -167,9 +189,7 @@ function Card({ acc, now, onRefresh }) {
       <div className="keymask">{acc.keyMasked || ''}</div>
       <div className="ring-row">
         <Ring state={effState} percent={effState === 'red' ? 100 : (effState === 'green' ? 100 : 0)} />
-        <span className={`wk55-badge ${weeklyCapHit ? 'hit' : 'ok'}`} title="Weekly $55 allowance">
-          <span className="wk55-dot" /> $55/wk<br />{weeklyCapHit ? 'used' : 'ok'}
-        </span>
+        <MiniRing hit={weeklyCapHit} />
       </div>
       <div className="stat">
         {effState === 'red' && (
