@@ -160,15 +160,17 @@ function Card({ acc, now, onRefresh }) {
 
   return (
     <div className="card" style={isExpired ? { opacity: 0.6, borderColor: 'var(--red)' } : undefined}>
-      <span className={`wk55-badge ${weeklyCapHit ? 'hit' : 'ok'}`} title="Weekly $55 allowance">
-        <span className="wk55-dot" /> $55/wk {weeklyCapHit ? 'used' : 'ok'}
-      </span>
       <span className={`badge ${isExpired ? 'red' : effState}`}>
         {isExpired ? 'Expired' : effState === 'green' ? 'Active' : effState === 'red' ? 'Limit reached' : effState === 'error' ? 'Error' : 'Unchecked'}
       </span>
       <div className="name">{acc.name}</div>
       <div className="keymask">{acc.keyMasked || ''}</div>
-      <Ring state={effState} percent={effState === 'red' ? 100 : (effState === 'green' ? 100 : 0)} />
+      <div className="ring-row">
+        <Ring state={effState} percent={effState === 'red' ? 100 : (effState === 'green' ? 100 : 0)} />
+        <span className={`wk55-badge ${weeklyCapHit ? 'hit' : 'ok'}`} title="Weekly $55 allowance">
+          <span className="wk55-dot" /> $55/wk<br />{weeklyCapHit ? 'used' : 'ok'}
+        </span>
+      </div>
       <div className="stat">
         {effState === 'red' && (
           <>
