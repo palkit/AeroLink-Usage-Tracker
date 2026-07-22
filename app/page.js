@@ -210,44 +210,42 @@ function Card({ acc, now, onRefresh }) {
         )}
       </div>
 
-      {weeklyCapHit ? (
-        <div className="expiry" style={{ color: 'var(--red)', marginTop: 12 }}>
-          {wk && wk.weekNo < 2
-            ? `🔒 $55/week used — unlocks when Week 2 starts (${fmtLong(wk.leftMs)})`
-            : '🔒 $55/week used — no more resets left, stays limited (last week)'}
-        </div>
-      ) : (
-        r5 && !isExpired && (
-          <div className="expiry" style={{ color: r5.leftMs < 60 * 60 * 1000 ? 'var(--amber)' : 'var(--green)', marginTop: 12 }}>
-            {`⏱ 5h window resets in ${fmtCountdown(r5.leftMs) || '0m'}`}
+      <div className="info-stack">
+        {weeklyCapHit ? (
+          <div className="expiry" style={{ color: 'var(--red)' }}>
+            {wk && wk.weekNo < 2
+              ? `🔒 $55/week used — unlocks when Week 2 starts (${fmtLong(wk.leftMs)})`
+              : '🔒 $55/week used — no more resets left, stays limited (last week)'}
           </div>
-        )
-      )}
+        ) : (
+          r5 && !isExpired && (
+            <div className="expiry" style={{ color: r5.leftMs < 60 * 60 * 1000 ? 'var(--amber)' : 'var(--green)' }}>
+              {`⏱ 5h window resets in ${fmtCountdown(r5.leftMs) || '0m'}`}
+            </div>
+          )
+        )}
 
-      {wk && !isExpired && (
-        <div className="expiry" style={{ color: wk.leftMs < 86400000 ? 'var(--amber)' : 'var(--muted)', marginTop: 8 }}>
-          {`📅 Week ${wk.weekNo} ends in ${fmtLong(wk.leftMs)}`}
-        </div>
-      )}
+        {wk && !isExpired && (
+          <div className="expiry" style={{ color: wk.leftMs < 86400000 ? 'var(--amber)' : 'var(--muted)' }}>
+            {`📅 Week ${wk.weekNo} ends in ${fmtLong(wk.leftMs)}`}
+          </div>
+        )}
 
-      {exp && (
-        <div
-          className="expiry"
-          style={{ color: isExpired ? 'var(--red)' : (exp.leftMs < 2 * 86400000 ? 'var(--amber)' : 'var(--muted)') }}
-        >
-          {isExpired
-            ? '⛔ Account expired (2 weeks over)'
-            : `⏳ Account expires in ${fmtLong(exp.leftMs)}`}
-        </div>
-      )}
+        {exp && (
+          <div
+            className="expiry"
+            style={{ color: isExpired ? 'var(--red)' : (exp.leftMs < 2 * 86400000 ? 'var(--amber)' : 'var(--muted)') }}
+          >
+            {isExpired
+              ? '⛔ Account expired (2 weeks over)'
+              : `⏳ Account expires in ${fmtLong(exp.leftMs)}`}
+          </div>
+        )}
 
-      <button
-        className="btn"
-        style={{ marginTop: 12, width: '100%' }}
-        onClick={() => copyKey(acc.id, setCopied)}
-      >
-        {copied ? '✓ Copied!' : 'Copy API key'}
-      </button>
+        <button className="btn copy-btn" onClick={() => copyKey(acc.id, setCopied)}>
+          {copied ? '✓ Copied!' : 'Copy API key'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -292,11 +290,14 @@ export default function Page() {
   return (
     <div className="wrap">
       <div className="topbar">
-        <div>
-          <h1>Aerolink Usage Panel</h1>
-          <div className="sub">{accounts.length} account{accounts.length !== 1 ? 's' : ''} · live-checks on page load &amp; Check now</div>
+        <div className="topbar-title">
+          <span className="topbar-dot" />
+          <div>
+            <h1>Aerolink Usage Panel</h1>
+            <div className="sub">{accounts.length} account{accounts.length !== 1 ? 's' : ''} · live-checks on page load &amp; Check now</div>
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 10 }}>
+        <div className="topbar-actions">
           <button className="btn" onClick={refreshNow} disabled={refreshing}>
             {refreshing ? 'Checking…' : 'Check now'}
           </button>
